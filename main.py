@@ -131,24 +131,25 @@ def zone_trend(
     return JSONResponse(result.to_dict(orient="records"))
 
 
-
 @app.get("/zones/top")
 def top_zones(
     metric: str = Query(default="Lead Penetration"),
     week: str = Query(default="L0W_ROLL"),
-    limit: int = Query(default=5)
+    limit: int = Query(default=5),
+    order: str = Query(default="DESC")
 ):
     query = f"""
         SELECT COUNTRY, CITY, ZONE, ZONE_TYPE, ZONE_PRIORITIZATION,
                ROUND("{week}" * 100, 2) AS value
         FROM read_csv_auto(?, HEADER=TRUE)
         WHERE METRIC = ?
-        ORDER BY value DESC
+        ORDER BY value {order}
         LIMIT ?
     """
     con = duckdb.connect()
     result = con.execute(query, [METRICS_PATH, metric, limit]).fetchdf()
     return JSONResponse(result.to_dict(orient="records"))
+
 
 
 @app.get("/zones/compare")
