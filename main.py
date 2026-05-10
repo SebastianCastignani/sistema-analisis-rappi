@@ -111,7 +111,7 @@ def zone_trend(
 ):
     # construimos las columnas según las semanas pedidas
     # si piden 4 semanas → L0W_ROLL, L1W_ROLL, L2W_ROLL, L3W_ROLL
-    week_cols = ", ".join([f"L{i}W_ROLL" for i in range(weeks)])
+    week_cols = ", ".join([f"L{i}W_ROLL" for i in range(weeks-1, -1, -1)])
 
     query = f"""
         UNPIVOT (
