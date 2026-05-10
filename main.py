@@ -140,7 +140,7 @@ def top_zones(
 ):
     query = f"""
         SELECT COUNTRY, CITY, ZONE, ZONE_TYPE, ZONE_PRIORITIZATION,
-               "{week}" AS value
+               ROUND("{week}" * 100, 2) AS value
         FROM read_csv_auto(?, HEADER=TRUE)
         WHERE METRIC = ?
         ORDER BY value DESC
