@@ -3,11 +3,7 @@
 Bot conversacional y sistema de insights automáticos para que equipos de SP&A y Operations puedan consultar métricas operacionales en lenguaje natural y recibir reportes ejecutivos semanales.
  
 ---
- 
-## ¿Qué es esto?
- 
-Rappi opera en 9 países con cientos de zonas geográficas. Los equipos de operaciones necesitan tomar decisiones data-driven constantemente, pero el acceso a los datos requiere conocimiento técnico (SQL, Python).
- 
+  
 Este sistema resuelve dos problemas:
  
 1. **Chatbot conversacional** — cualquier persona del equipo puede preguntar en lenguaje natural y obtener análisis con interpretación de negocio
@@ -175,81 +171,80 @@ No requiere parámetros. Corre el análisis completo y devuelve el PDF.
 ---
  
 ## Cómo correrlo localmente
- 
+
 ### Requisitos
 - Python 3.11+
 - n8n (cloud o local)
+
 ### 1. Clonar el repo
 ```bash
 git clone https://github.com/SebastianCastignani/sistema-analisis-rappi.git
 cd sistema-analisis-rappi
 ```
- 
-### 2. Crear entorno virtual e instalar dependencias
+
+### 2. Importar el workflow de n8n (primero)
+- Abrí n8n
+- Importá el archivo `n8n_workflow.json`
+- Configurá tu OpenAI API key en el nodo de modelo — **es lo único que tenés que configurar**
+- Los endpoints ya están precargados en los nodos HTTP y apuntan a Railway
+
+### 3. Usar endpoints ya deployados (recomendado)
+
+Los endpoints ya están disponibles en Railway, no hace falta levantar nada:
+
+```
+https://web-production-14977.up.railway.app
+```
+
+Podés probarlos directamente en el browser.
+
+### 4. Usar endpoints locales (opcional)
+
+Si querés correr la API localmente:
+
+```bash
+python3 -m uvicorn main:app --reload --port 8000
+```
+
+La terminal te va a mostrar algo así:
+
+```
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+En ese caso reemplazá la URL base en cada tool HTTP de n8n:
+- De: `https://web-production-14977.up.railway.app`
+- A: `http://localhost:8000`
+
+### 5. Configurar entorno local (si vas a correr scripts)
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
- 
-### 3. Configurar variables de entorno
+
+### 6. Configurar variables de entorno (solo para ejecución local)
 ```bash
 cp .env.example .env
 # Editar .env y agregar tu ANTHROPIC_API_KEY
 ```
- 
-### 4. Usar los endpoints ya deployados (recomendado)
- 
-Los endpoints ya están disponibles en Railway, no hace falta levantar nada:
- 
-```
-https://web-production-14977.up.railway.app
-```
- 
-Podés probarlos directamente en el browser.
- 
-### 5. Usar endpoints locales (opcional)
- 
-Si querés correr la API localmente:
- 
-```bash
-python3 -m uvicorn main:app --reload --port 8000
-```
- 
-La terminal te va a mostrar algo así:
- 
-```
-INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-```
- 
-En ese caso reemplazá la URL base en n8n por `http://localhost:8000`.
- 
-### 7. Importar el workflow de n8n
-- Abrí n8n
-- Importá el archivo `n8n_workflow.json`
-- Configurá tu OpenAI API key en el nodo de modelo — **es lo único que tenés que configurar**
-- Los endpoints ya están configurados para apuntar a Railway, no hace falta tocar nada más
-#### Si querés usar endpoints locales en vez de Railway
-Levantá el servidor local (paso 5) y reemplazá la URL base en cada tool HTTP de n8n:
-- De: `https://web-production-14977.up.railway.app`
-- A: `http://localhost:8000`
 ---
  
 ## Reporte de Insights Automáticos
- 
+
 Tenés dos formas de generarlo:
- 
-**Desde la terminal:**
-```bash
-python3 insight_automatico.py
-```
-Genera `reporte_rappi.pdf` en la carpeta raíz.
- 
-**Desde el navegador** (ya deployado en Railway):
+
+**Desde el navegador** (Railway):
 ```
 https://web-production-14977.up.railway.app/insights/report
 ```
 Descarga el PDF directamente sin necesidad de correr nada localmente.
+
+**Desde la terminal (local):**
+```bash
+python3 insight_automatico.py
+```
+Genera `reporte_rappi.pdf` en la carpeta raíz. Para el modo local necesitás una API key de Anthropic en `.env`.Para generar una se hace desde la consola de claude `https://platform.claude.com/settings/workspaces/default/keys`
  
 ---
  
@@ -259,7 +254,6 @@ La API está deployada en **Railway** y se redeploya automáticamente con cada p
  
 URL pública: `https://web-production-14977.up.railway.app`
  
-El chatbot está en **n8n Cloud**: `https://sebascastignanitest.app.n8n.cloud`
  
 ---
  
@@ -279,7 +273,7 @@ El chatbot está en **n8n Cloud**: `https://sebascastignanitest.app.n8n.cloud`
  
 ## Limitaciones conocidas
  
-- **Datos dummy inconsistentes**: el dataset tiene algunos valores de Lead Penetration fuera del rango esperado (>100%) — el bot detecta estas inconsistencias automáticamente y las excluye del análisis
+- **Datos inconsistentes**: el dataset tiene algunos valores de Lead Penetration fuera del rango esperado (>100%) — el bot detecta estas inconsistencias automáticamente y las excluye del análisis
 - **Semana actual parcial**: L0W_ROLL puede representar una semana incompleta, lo que puede generar caídas aparentes en métricas
 - **Sin visualizaciones en el chat**: el chatbot responde en texto; los gráficos están disponibles solo en el reporte PDF
 - **n8n Cloud**: el workflow requiere credenciales propias de OpenAI
@@ -292,3 +286,15 @@ El chatbot está en **n8n Cloud**: `https://sebascastignanitest.app.n8n.cloud`
 - **Visualizaciones en chat**: integrar gráficos inline en la respuesta del bot
 - **Integrar chatbot**: Actualmente el chatbot se prueba mediante la ventana de chat que tiene n8n , si el chatbot es util se podria integrar a herramientas como slack , whatsapp o algun crm , para que los diferntes equipos lo puedan utilizar de manera sencilla (n8n tiene nodos para estos servicios)
 - **Arquitectura serverless**: migrar cada endpoint a una Lambda/Cloud Function para escalar sin servidor
+
+---
+
+## Costos (estimados)
+
+### Infraestructura
+- **Railway**: uso la version gratuita (5 creditos). Si se pasa a pago, el plan base es de ~$5/mes.
+- **Alternativas**: se puede usar alguna instancia de AWS con capa gratuita para reducir costos.
+
+### Modelos
+- **Claude Sonnet 4.6** (resumen del PDF): una llamada tipica cuesta aproximadamente $0.021 USD.
+- **GPT-5 mini** (chatbot): $0.25 por millon de tokens de entrada y $2.00 por millon de tokens de salida. En una llamada tipica el costo es muy bajo.
