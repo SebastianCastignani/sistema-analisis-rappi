@@ -1,0 +1,357 @@
+{
+  "name": "chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "406a7beb-6fe3-4018-966c-33f065ad3ae2",
+      "name": "When chat message received",
+      "webhookId": "4ef6bb1c-0675-429e-8c9d-f78ddc6b372e"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "Eres un asistente de análisis operacional para Rappi. Tienes acceso a datos de métricas operacionales de 9 países (AR, BR, CL, CO, CR, EC, MX, PE, UY) con información semanal de las últimas 8 semanas (L0W = semana actual, L8W = hace 8 semanas).\n\nMÉTRICAS DISPONIBLES (usar estos nombres exactos):\n- Lead Penetration → porcentaje de tiendas activas sobre el total de potenciales (rango esperado: 0% a 100%)\n- Perfect Orders → órdenes sin cancelaciones ni demoras (rango esperado: 0% a 100%)\n- Gross Profit UE → ganancia bruta por orden (en dinero, NO es porcentaje)\n- Pro Adoption (Last Week Status) → usuarios con suscripción Pro (rango esperado: 0% a 100%)\n- % PRO Users Who Breakeven → usuarios Pro que cubren el costo de su membresía (rango esperado: 0% a 100%)\n- Non-Pro PTC > OP → conversión de checkout a orden para usuarios sin Pro (rango esperado: 0% a 100%)\n- Turbo Adoption → usuarios que compran en Turbo (rango esperado: 0% a 100%)\n- MLTV Top Verticals Adoption → usuarios que compran en múltiples verticales (rango esperado: 0% a 100%)\n- Restaurants Markdowns / GMV → descuentos sobre ventas en restaurantes (rango esperado: 0% a 100%)\n- % Restaurants Sessions With Optimal Assortment → sesiones con 40+ restaurantes disponibles (rango esperado: 0% a 100%)\n- Restaurants SS > ATC CVR → conversión de entrar a restaurante a agregar al carrito (rango esperado: 0% a 100%)\n- Restaurants SST > SS CVR → conversión de ver lista a entrar a un restaurante (rango esperado: 0% a 100%)\n- Retail SST > SS CVR → conversión de ver lista a entrar a un supermercado (rango esperado: 0% a 100%)\n\nREGLAS IMPORTANTES:\n- Las métricas porcentuales ya vienen multiplicadas por 100 en los resultados (ej: 85.3 significa 85.3%)\n- Gross Profit UE NO es porcentaje, es dinero por orden\n- Si preguntan por \"zonas problemáticas\" → buscar métricas deterioradas (Perfect Orders bajo, Gross Profit UE bajo)\n- Si preguntan por \"oportunidades\" → buscar Lead Penetration bajo (hay comercios por incorporar)\n- Siempre respondé en español\n- Cuando tengas los datos, interpretá los resultados en lenguaje de negocio, no solo listés números\n- Si no encontrás datos para una zona o métrica específica, explicá por qué (ej: \"No encontré datos para esa zona, verificá el nombre exacto\")\n- Ante valores fuera del rango esperado (>100% en métricas porcentuales), ignoralos completamente y usá solo los menores o iguales a 100%. Si no tenés suficientes datos válidos, invocá de nuevo el mismo endpoint con mayor límite (limit=50, limit=100) hasta completar la respuesta. Mencioná al final que hubo inconsistencias en el dataset.\n- Solo podés responder con los datos disponibles en los endpoints. No ofrezcas análisis o desgloses que no existen en los datos (ej: breakdown por causa de cancelación, detalle por comercio, por rider, etc.)\n- Solo sugerí análisis adicionales que puedas resolver con 1 o 2 consultas. No ofrezcas análisis que requieran más de 2 llamadas a los datos.\n\nCONTEXTO DE NEGOCIO:\nEstás ayudando a equipos de Strategy, Planning & Analytics (SP&A) y Operations de Rappi a tomar decisiones data-driven. El objetivo es democratizar el acceso a datos operacionales para usuarios no técnicos.\n\nESTILO DE RESPUESTA:\n- Respuestas: primero los datos, después interpretación breve, después 1-2 acciones concretas\n- No listés más de 3 recomendaciones por respuesta\n- Hablá en lenguaje natural y directo, como si fueras un analista explicando los datos. Evitá términos técnicos como \"L0W_ROLL\", \"endpoint\", \"≤100%\", \"valores válidos\" en la respuesta al usuario. En su lugar usá \"esta semana\", \"los datos disponibles\", \"según lo que tenemos\".\n\nBIENVENIDA:\n- Si el usuario saluda con \"hola\" o similar, respondé primero el saludo (ej: \"¡Hola! ¿Cómo estás?\") y después en la misma respuesta mencioná brevemente qué podés hacer. Sin bullets, todo en prosa, máximo 3 líneas."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        208,
+        0
+      ],
+      "id": "2fa928bb-fd57-463a-a339-33d7c8fc7066",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        208
+      ],
+      "id": "96678d9b-7127-4ab9-8132-47e05b68116e",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        224,
+        208
+      ],
+      "id": "adc35af7-3997-45c2-9b71-2d2d5dfb84ff",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Devuelve las zonas con mayor o menor valor de una métrica. Usar para preguntas como \"top 5 zonas con mayor Lead Penetration\"",
+        "url": "https://web-production-14977.up.railway.app/zones/top",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "metric",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Nombre exacto de la métrica, ej: Lead Penetration`, 'string') }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Número entero de resultados a devolver, ej: 5`, 'string') }}"
+            },
+            {
+              "name": "week",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Semana a consultar, ej: L0W_ROLL para la actual, L1W_ROLL para la anterior`, 'string') }}"
+            },
+            {
+              "name": "order",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters3_Value', `Orden de resultados: DESC para mayores primero, ASC para menores primero`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        768,
+        304
+      ],
+      "id": "b64df8ec-425b-4ac9-bdfc-5a524a605c9f",
+      "name": "get_top_zones"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Compara el valor promedio de una métrica agrupando por alguna categoría",
+        "url": "https://web-production-14977.up.railway.app/zones/compare",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "metric",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Nombre exacto de la métrica`, 'string') }}"
+            },
+            {
+              "name": "group_by",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Columna por la que agrupar: ZONE_TYPE, COUNTRY o ZONE_PRIORITIZATION`, 'string') }}"
+            },
+            {
+              "name": "week",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Semana a consultar. Ej: L0W_ROLL`, 'string') }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters3_Value', `Código de país opcional: AR, BR, CL, CO, CR, EC, MX, PE, UY`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        336
+      ],
+      "id": "4b8fda83-00a7-4a60-bc9a-0b5ea02ddb2f",
+      "name": "valor_promedio_metricas"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Muestra la evolución de una métrica en una zona específica a lo largo de las semanas.",
+        "url": "https://web-production-14977.up.railway.app/zones/trend",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "metric",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Nombre exacto de la métrica`, 'string') }}"
+            },
+            {
+              "name": "zone",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Nombre exacto de la zona. Ej: Chapinero`, 'string') }}"
+            },
+            {
+              "name": "week",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Número de semanas a mostrar. Máximo 9 (el dataset tiene 9 semanas: L0W a L8W). Por defecto trae las 9 semanas completas.`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        512,
+        432
+      ],
+      "id": "ce336abb-df9f-4b22-88f8-2ef6cb1d0b91",
+      "name": "evolucion_metricas"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Encuentra zonas que tienen una métrica alta y otra baja simultáneamente. Usar para preguntas como \"zonas con alto Lead Penetration pero bajo Perfect Orders\"\n\n",
+        "url": "https://web-production-14977.up.railway.app/zones/cross",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "metric_high",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Métrica que debe ser alta`, 'string') }}"
+            },
+            {
+              "name": "metric_low",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Métrica que debe ser baja`, 'string') }}"
+            },
+            {
+              "name": "threshold_high",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Umbral mínimo para métrica alta. Número decimal. Ej: 50.0`, 'string') }}"
+            },
+            {
+              "name": "threshold_low",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters3_Value', `Umbral máximo para métrica baja. Número decimal. Ej: 50.0`, 'string') }}"
+            },
+            {
+              "name": "week",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters4_Value', `Semana a consultar. Ej: L0W_ROLL`, 'string') }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters5_Value', `Código de país opcional: AR, BR, CL, CO, CR, EC, MX, PE, UY`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        576,
+        304
+      ],
+      "id": "c60baaf8-53c5-4456-93de-0a22cc41768d",
+      "name": "alta_y_baja_metrica"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Devuelve las zonas con mayor crecimiento en órdenes comparando semanas. Usar para preguntas como \"zonas que más crecen en órdenes en las últimas 5 semanas\"",
+        "url": "https://web-production-14977.up.railway.app/orders/growth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "weeks",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Número entero de semanas a comparar. Ej: 5`, 'string') }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Número entero de zonas a devolver. Ej: 10`, 'string') }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Código de país opcional: AR, BR, CL, CO, CR, EC, MX, PE, UY`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        272,
+        432
+      ],
+      "id": "397105c7-7ab0-4a56-a403-a876ce7b0a72",
+      "name": "crecimiento"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_top_zones": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "valor_promedio_metricas": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "evolucion_metricas": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "alta_y_baja_metrica": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "crecimiento": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e9431197-ca31-46dd-b554-b2346d3c2aad",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb21b8b9a0944f85853e0f16c98ddaab0356ea53555e3e5a4ca89b38aad67a32"
+  },
+  "id": "eqVCyw6rjgRdADRR",
+  "tags": []
+}
