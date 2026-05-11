@@ -298,3 +298,31 @@ URL pública: `https://web-production-14977.up.railway.app`
 ### Modelos
 - **Claude Sonnet 4.6** (resumen del PDF): una llamada tipica cuesta aproximadamente $0.021 USD.
 - **GPT-5 mini** (chatbot): $0.25 por millon de tokens de entrada y $2.00 por millon de tokens de salida. En una llamada tipica el costo es muy bajo.
+
+---
+
+## Configurar credencial GPT en n8n
+
+En el nodo GPT del agente:
+1. Selecciona **My own credential**.
+2. Luego haz click en **Set up credential**.
+3. En el panel, pega tu API key generada en OpenAI: https://platform.openai.com/api-keys
+
+Referencias visuales:
+
+![Nodo GPT](img/nodo-gpt.png)
+![Panel credencial GPT](img/crendecial-gpt.png)
+
+---
+
+## Como usar el chatbot en n8n
+
+Una vez configurado todo, podes abrir el chat:
+1. Presiona la tecla **C**.
+2. O hace click en el boton **Open chat**.
+3. Escribi tu pregunta en el panel y envia.
+
+Referencias visuales:
+
+![Abrir chat](img/chat-open.png)
+![Ejemplo de chat](img/chat-ejemplo.png)
