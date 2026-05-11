@@ -1,16 +1,18 @@
 from dotenv import load_dotenv
 load_dotenv()
+
 import os
 import io
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # sin interfaz gráfica, para servidor
+matplotlib.use("Agg") 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from pathlib import Path
 from datetime import datetime
 import anthropic
+import duckdb
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -52,33 +54,17 @@ COLOR_NARANJA = colors.HexColor("#FF441F")
 COLOR_GRIS    = colors.HexColor("#F5F5F5")
 COLOR_OSCURO  = colors.HexColor("#1A1A1A")
 
-
 # ── Helpers ────────────────────────────────────────────────────
-def _normalizar_porcentaje(serie):
-    """Normaliza valores en [0,1] a porcentaje; invalida >100."""
-    serie = serie.copy()
-    serie[serie <= 1] = serie[serie <= 1] * 100
-    serie[serie > 100] = np.nan
-    return serie
+def conectar():
+    """Abre una conexión DuckDB en memoria"""
+    return duckdb.connect()
+
+def lista_sql(valores):
+    """Convierte lista Python a formato SQL: ('a', 'b', 'c')"""
+    return "('" + "', '".join(valores) + "')"
 
 
-def _formatear_tabla(filas, col_widths):
-    tabla = Table(filas, colWidths=col_widths)
-    tabla.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), COLOR_NARANJA),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [COLOR_GRIS, colors.white]),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    return tabla
-
-
-def _guardar_figura(fig):
+def guardar_figura(fig):
     """Guarda un matplotlib fig en memoria para ReportLab."""
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
@@ -87,7 +73,26 @@ def _guardar_figura(fig):
     return buffer
 
 
-def _limpiar_markdown_basico(texto):
+def crear_tabla(filas, col_widths, font_size=8, align=None, valign="MIDDLE", padding=4):
+    tabla = Table(filas, colWidths=col_widths)
+    estilos = [
+        ("BACKGROUND", (0, 0), (-1, 0), COLOR_NARANJA),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), font_size),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [COLOR_GRIS, colors.white]),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ("VALIGN", (0, 0), (-1, -1), valign),
+        ("TOPPADDING", (0, 0), (-1, -1), padding),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
+    ]
+    if align:
+        estilos.extend(align)
+    tabla.setStyle(TableStyle(estilos))
+    return tabla
+
+
+def limpiar_markdown_basico(texto):
     """Limpia bullets/markdown simples que el LLM puede devolver."""
     import re
     lineas = []
@@ -107,50 +112,158 @@ def _limpiar_markdown_basico(texto):
 
 # ── Carga y limpieza ───────────────────────────────────────────
 def cargar_datos():
+    """
+    Carga el CSV con pandas y normaliza métricas porcentuales.
+    Se hace en pandas porque requiere iterar columna por columna
+    con condiciones compuestas que en SQL serían muy rebuscado.
+    """
     datos = pd.read_csv(RUTA_METRICAS)
     for columna in COLUMNAS_SEMANAS:
-        es_pct = datos["METRIC"].isin(METRICAS_PORCENTAJE)
-        datos.loc[es_pct, columna] = _normalizar_porcentaje(datos.loc[es_pct, columna])
+        filas_decimal = datos["METRIC"].isin(METRICAS_PORCENTAJE) & (datos[columna] <= 1)
+        datos.loc[filas_decimal, columna] = datos.loc[filas_decimal, columna] * 100
+        filas_invalidas = datos["METRIC"].isin(METRICAS_PORCENTAJE) & (datos[columna] > 100)
+        datos.loc[filas_invalidas, columna] = np.nan
     return datos
 
 
 # ── Análisis ───────────────────────────────────────────────────
 def detectar_anomalias(datos):
+    """
+    Compara L0W_ROLL vs L1W_ROLL. Si el cambio supera el umbral es una anomalía.
+    Usa DuckDB SQL — es un filtro y cálculo directo que se expresa mejor en SQL.
+    Gross Profit UE usa diferencia absoluta porque puede ser negativo.
+    """
+    con = conectar()
+    con.register("metricas", datos)
+
+    # Métricas porcentuales — cambio porcentual normal
+    deterioros_pct = con.execute(f"""
+        SELECT 'Deterioro' AS categoria, METRIC AS metrica,
+               ZONE AS zona, COUNTRY AS pais, CITY AS ciudad,
+               ROUND(L0W_ROLL, 2) AS valor_actual,
+               ROUND(L1W_ROLL, 2) AS valor_anterior,
+               ROUND(((L0W_ROLL - L1W_ROLL) / ABS(L1W_ROLL)) * 100, 1) AS cambio
+        FROM metricas
+        WHERE METRIC IN {lista_sql(METRICAS_PORCENTAJE)}
+        AND ABS(L1W_ROLL) > {UMBRAL_VALOR_MINIMO}
+        AND L0W_ROLL IS NOT NULL AND L1W_ROLL IS NOT NULL
+        AND ((L0W_ROLL - L1W_ROLL) / ABS(L1W_ROLL)) * 100 < -{UMBRAL_ANOMALIA}
+        ORDER BY cambio ASC LIMIT 20
+    """).fetchdf()
+
+    mejoras_pct = con.execute(f"""
+        SELECT 'Mejora' AS categoria, METRIC AS metrica,
+               ZONE AS zona, COUNTRY AS pais, CITY AS ciudad,
+               ROUND(L0W_ROLL, 2) AS valor_actual,
+               ROUND(L1W_ROLL, 2) AS valor_anterior,
+               ROUND(((L0W_ROLL - L1W_ROLL) / ABS(L1W_ROLL)) * 100, 1) AS cambio
+        FROM metricas
+        WHERE METRIC IN {lista_sql(METRICAS_PORCENTAJE)}
+        AND ABS(L1W_ROLL) > {UMBRAL_VALOR_MINIMO}
+        AND L0W_ROLL IS NOT NULL AND L1W_ROLL IS NOT NULL
+        AND ((L0W_ROLL - L1W_ROLL) / ABS(L1W_ROLL)) * 100 > {UMBRAL_ANOMALIA}
+        ORDER BY cambio DESC LIMIT 20
+    """).fetchdf()
+
+    # Gross Profit UE — diferencia absoluta porque puede ser negativo
+    deterioros_gp = con.execute(f"""
+        SELECT 'Deterioro' AS categoria, METRIC AS metrica,
+               ZONE AS zona, COUNTRY AS pais, CITY AS ciudad,
+               ROUND(L0W_ROLL, 2) AS valor_actual,
+               ROUND(L1W_ROLL, 2) AS valor_anterior,
+               ROUND(L0W_ROLL - L1W_ROLL, 1) AS cambio
+        FROM metricas
+        WHERE METRIC = 'Gross Profit UE'
+        AND ABS(L1W_ROLL) > {UMBRAL_VALOR_MINIMO}
+        AND L0W_ROLL IS NOT NULL AND L1W_ROLL IS NOT NULL
+        AND (L0W_ROLL - L1W_ROLL) < -{UMBRAL_ANOMALIA}
+        ORDER BY cambio ASC LIMIT 20
+    """).fetchdf()
+
+    return pd.concat([deterioros_pct, mejoras_pct, deterioros_gp], ignore_index=True)
+
+
+def detectar_benchmarking(datos):
+    """
+    Compara cada zona contra el promedio de su grupo (país + tipo de zona).
+    Usa DuckDB SQL con AVG y STDDEV_POP — operaciones de agregación nativas.
+    """
+    con = conectar()
+    con.register("metricas", datos)
+
+    return con.execute(f"""
+        WITH estadisticas_grupo AS (
+            SELECT COUNTRY, ZONE_TYPE, METRIC,
+                   AVG(L0W_ROLL)        AS promedio_grupo,
+                   STDDEV_POP(L0W_ROLL) AS desvio_grupo
+            FROM metricas
+            WHERE METRIC IN {lista_sql(METRICAS_BENCHMARKING)}
+            AND L0W_ROLL IS NOT NULL
+            GROUP BY COUNTRY, ZONE_TYPE, METRIC
+            HAVING COUNT(*) >= 3
+        )
+        SELECT m.METRIC AS metrica, m.COUNTRY AS pais, m.ZONE_TYPE AS tipo_zona,
+               m.ZONE AS zona, m.CITY AS ciudad,
+               ROUND(m.L0W_ROLL, 2) AS valor_zona,
+               ROUND(e.promedio_grupo, 2) AS promedio_grupo,
+               ROUND(((m.L0W_ROLL - e.promedio_grupo) / ABS(e.promedio_grupo)) * 100, 1) AS diferencia
+        FROM metricas m
+        JOIN estadisticas_grupo e
+            ON m.COUNTRY = e.COUNTRY AND m.ZONE_TYPE = e.ZONE_TYPE AND m.METRIC = e.METRIC
+        WHERE m.L0W_ROLL IS NOT NULL
+        AND m.L0W_ROLL < e.promedio_grupo - e.desvio_grupo
+        AND ABS((m.L0W_ROLL - e.promedio_grupo) / ABS(e.promedio_grupo)) * 100 > {UMBRAL_BENCHMARK}
+        ORDER BY diferencia ASC
+    """).fetchdf()
+
+
+def detectar_correlaciones(datos):
+    """
+    Calcula correlación de Pearson entre pares de métricas.
+    DuckDB pivotea los datos con CASE WHEN, luego pandas calcula las correlaciones
+    porque DuckDB no soporta CORR() entre columnas dinámicas sin SQL muy complejo.
+    """
+    con = conectar()
+    con.register("metricas", datos)
+
+    # Pivotear: una fila por zona, una columna por métrica
+    tabla_pivot = con.execute(f"""
+        SELECT COUNTRY, CITY, ZONE,
+            {', '.join([f"MAX(CASE WHEN METRIC = '{m}' THEN L0W_ROLL END) AS \"{m}\""
+                       for m in METRICAS_PORCENTAJE])}
+        FROM metricas
+        GROUP BY COUNTRY, CITY, ZONE
+    """).fetchdf()
+
+    metricas_disponibles = [m for m in METRICAS_PORCENTAJE if m in tabla_pivot.columns]
     filas_resultado = []
-    for metrica in datos["METRIC"].unique():
-        datos_metrica = datos[datos["METRIC"] == metrica].copy()
-        datos_metrica = datos_metrica[datos_metrica["L1W_ROLL"].abs() > UMBRAL_VALOR_MINIMO]
 
-        if datos_metrica["L1W_ROLL"].min() < 0:
-            datos_metrica["cambio_porcentual"] = datos_metrica["L0W_ROLL"] - datos_metrica["L1W_ROLL"]
-        else:
-            datos_metrica["cambio_porcentual"] = (
-                (datos_metrica["L0W_ROLL"] - datos_metrica["L1W_ROLL"])
-                / datos_metrica["L1W_ROLL"].abs() * 100
-            )
+    for i in range(len(metricas_disponibles)):
+        for j in range(i + 1, len(metricas_disponibles)):
+            m1, m2 = metricas_disponibles[i], metricas_disponibles[j]
+            par = tabla_pivot[[m1, m2]].dropna()
+            if len(par) < 10:
+                continue
+            corr = par[m1].corr(par[m2])
+            if abs(corr) >= UMBRAL_CORRELACION:
+                filas_resultado.append({
+                    "metrica_1": m1, "metrica_2": m2,
+                    "correlacion": round(corr, 2),
+                    "tipo": "positiva" if corr > 0 else "negativa",
+                    "cantidad_zonas": len(par)
+                })
 
-        datos_metrica = datos_metrica.dropna(subset=["cambio_porcentual"])
-
-        for _, fila in datos_metrica[datos_metrica["cambio_porcentual"] < -UMBRAL_ANOMALIA].nsmallest(3, "cambio_porcentual").iterrows():
-            filas_resultado.append({
-                "categoria": "Deterioro", "metrica": metrica,
-                "zona": fila["ZONE"], "pais": fila["COUNTRY"], "ciudad": fila["CITY"],
-                "valor_actual": round(fila["L0W_ROLL"], 2),
-                "valor_anterior": round(fila["L1W_ROLL"], 2),
-                "cambio": round(fila["cambio_porcentual"], 1)
-            })
-        for _, fila in datos_metrica[datos_metrica["cambio_porcentual"] > UMBRAL_ANOMALIA].nlargest(3, "cambio_porcentual").iterrows():
-            filas_resultado.append({
-                "categoria": "Mejora", "metrica": metrica,
-                "zona": fila["ZONE"], "pais": fila["COUNTRY"], "ciudad": fila["CITY"],
-                "valor_actual": round(fila["L0W_ROLL"], 2),
-                "valor_anterior": round(fila["L1W_ROLL"], 2),
-                "cambio": round(fila["cambio_porcentual"], 1)
-            })
-    return pd.DataFrame(filas_resultado)
+    return pd.DataFrame(filas_resultado).sort_values("correlacion", key=abs, ascending=False)
 
 
 def detectar_tendencias(datos):
+    """
+    Detecta zonas con deterioro consecutivo en N+ semanas.
+    Se implementa en pandas porque requiere evaluar si cada valor
+    es menor que el anterior de forma encadenada — en SQL requeriría
+    múltiples JOINs o LAG() anidados que se vuelven muy difíciles de leer.
+    Solo analiza zonas High Priority o Prioritized para reducir ruido.
+    """
     filas_resultado = []
     columnas_recientes = COLUMNAS_SEMANAS[-(SEMANAS_TENDENCIA + 1):]
     zonas_prioritarias = datos[datos["ZONE_PRIORITIZATION"].isin(["High Priority", "Prioritized"])]
@@ -177,78 +290,40 @@ def detectar_tendencias(datos):
     return pd.DataFrame(filas_resultado).drop_duplicates(subset=["zona", "metrica"])
 
 
-def detectar_benchmarking(datos):
-    filas_resultado = []
-    for metrica in METRICAS_BENCHMARKING:
-        datos_metrica = datos[datos["METRIC"] == metrica].dropna(subset=["L0W_ROLL"])
-        for (pais, tipo_zona), grupo in datos_metrica.groupby(["COUNTRY", "ZONE_TYPE"]):
-            if len(grupo) < 3:
-                continue
-            promedio = grupo["L0W_ROLL"].mean()
-            desvio   = grupo["L0W_ROLL"].std()
-            for _, fila in grupo[grupo["L0W_ROLL"] < promedio - desvio].nsmallest(2, "L0W_ROLL").iterrows():
-                diferencia = (fila["L0W_ROLL"] - promedio) / abs(promedio) * 100
-                if abs(diferencia) > UMBRAL_BENCHMARK:
-                    filas_resultado.append({
-                        "metrica": metrica, "pais": pais, "tipo_zona": tipo_zona,
-                        "zona": fila["ZONE"], "ciudad": fila["CITY"],
-                        "valor_zona": round(fila["L0W_ROLL"], 2),
-                        "promedio_grupo": round(promedio, 2),
-                        "diferencia": round(diferencia, 1)
-                    })
-    return pd.DataFrame(filas_resultado)
-
-
-def detectar_correlaciones(datos):
-    tabla_pivot = datos.pivot_table(
-        index=["COUNTRY", "CITY", "ZONE"], columns="METRIC",
-        values="L0W_ROLL", aggfunc="mean"
-    )
-    metricas = [m for m in METRICAS_PORCENTAJE if m in tabla_pivot.columns]
-    filas_resultado = []
-
-    for i in range(len(metricas)):
-        for j in range(i + 1, len(metricas)):
-            m1, m2 = metricas[i], metricas[j]
-            par = tabla_pivot[[m1, m2]].dropna()
-            if len(par) < 10:
-                continue
-            corr = par[m1].corr(par[m2])
-            if abs(corr) >= UMBRAL_CORRELACION:
-                filas_resultado.append({
-                    "metrica_1": m1, "metrica_2": m2,
-                    "correlacion": round(corr, 2),
-                    "tipo": "positiva" if corr > 0 else "negativa",
-                    "cantidad_zonas": len(par)
-                })
-    return pd.DataFrame(filas_resultado).sort_values("correlacion", key=abs, ascending=False)
-
-
 def detectar_oportunidades(datos):
-    filas_resultado = []
+    """
+    Identifica zonas con potencial de crecimiento.
+    Usa DuckDB SQL — son filtros y JOINs simples que SQL expresa mejor.
+    """
+    con = conectar()
+    con.register("metricas", datos)
 
-    datos_lead = datos[datos["METRIC"] == "Lead Penetration"].dropna(subset=["L0W_ROLL"])
-    for _, fila in datos_lead[datos_lead["L0W_ROLL"] < 30].nsmallest(5, "L0W_ROLL").iterrows():
-        filas_resultado.append({
-            "tipo": "Expansión de oferta",
-            "zona": fila["ZONE"], "pais": fila["COUNTRY"], "ciudad": fila["CITY"],
-            "valor": round(fila["L0W_ROLL"], 2),
-            "descripcion": f"Lead Penetration {round(fila['L0W_ROLL'], 2)}% — alto potencial de incorporación de comercios"
-        })
+    expansion = con.execute(f"""
+        SELECT 'Expansión de oferta' AS tipo,
+               ZONE AS zona, COUNTRY AS pais, CITY AS ciudad,
+               ROUND(L0W_ROLL, 2) AS valor,
+               'Lead Penetration ' || ROUND(L0W_ROLL, 2) || '% — alto potencial de incorporación de comercios' AS descripcion
+        FROM metricas
+        WHERE METRIC = 'Lead Penetration'
+        AND L0W_ROLL IS NOT NULL AND L0W_ROLL < 30
+        ORDER BY L0W_ROLL ASC LIMIT 5
+    """).fetchdf()
 
-    datos_pro     = datos[datos["METRIC"] == "Pro Adoption (Last Week Status)"].dropna(subset=["L0W_ROLL"])
-    datos_perfect = datos[datos["METRIC"] == "Perfect Orders"].dropna(subset=["L0W_ROLL"])
-    combinados    = datos_pro.merge(datos_perfect, on=["COUNTRY", "CITY", "ZONE"], suffixes=("_pro", "_perfect"))
-    zonas_upsell  = combinados[(combinados["L0W_ROLL_pro"] < 10) & (combinados["L0W_ROLL_perfect"] > 85)]
+    upsell = con.execute(f"""
+        SELECT 'Upsell Pro' AS tipo,
+               pro.ZONE AS zona, pro.COUNTRY AS pais, pro.CITY AS ciudad,
+               ROUND(pro.L0W_ROLL, 2) AS valor,
+               'Pro Adoption ' || ROUND(pro.L0W_ROLL, 2) || '% con Perfect Orders ' || ROUND(perf.L0W_ROLL, 2) || '% — zona con buena operación pero baja monetización Pro' AS descripcion
+        FROM metricas pro
+        JOIN metricas perf ON pro.ZONE = perf.ZONE AND pro.COUNTRY = perf.COUNTRY
+        WHERE pro.METRIC  = 'Pro Adoption (Last Week Status)'
+        AND perf.METRIC   = 'Perfect Orders'
+        AND pro.L0W_ROLL  IS NOT NULL AND perf.L0W_ROLL IS NOT NULL
+        AND pro.L0W_ROLL  < 10 AND perf.L0W_ROLL > 85
+        ORDER BY pro.L0W_ROLL ASC LIMIT 5
+    """).fetchdf()
 
-    for _, fila in zonas_upsell.nsmallest(5, "L0W_ROLL_pro").iterrows():
-        filas_resultado.append({
-            "tipo": "Upsell Pro",
-            "zona": fila["ZONE"], "pais": fila["COUNTRY"], "ciudad": fila["CITY"],
-            "valor": round(fila["L0W_ROLL_pro"], 2),
-            "descripcion": f"Pro Adoption {round(fila['L0W_ROLL_pro'], 2)}% con Perfect Orders {round(fila['L0W_ROLL_perfect'], 2)}% — zona con buena operación pero baja monetización Pro"
-        })
-    return pd.DataFrame(filas_resultado)
+    return pd.concat([expansion, upsell], ignore_index=True)
 
 
 # ── Gráficos ───────────────────────────────────────────────────
@@ -275,7 +350,7 @@ def grafico_anomalias(anomalias):
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
     plt.tight_layout()
 
-    return _guardar_figura(fig)
+    return guardar_figura(fig)
 
 
 def grafico_tendencias(tendencias):
@@ -296,7 +371,7 @@ def grafico_tendencias(tendencias):
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
     plt.tight_layout()
 
-    return _guardar_figura(fig)
+    return guardar_figura(fig)
 
 
 def grafico_correlaciones(correlaciones):
@@ -318,17 +393,12 @@ def grafico_correlaciones(correlaciones):
     ax.set_title("Correlaciones entre Métricas Operacionales", fontsize=12, fontweight="bold")
     plt.tight_layout()
 
-    return _guardar_figura(fig)
+    return guardar_figura(fig)
 
 
 # ── LLM — Resumen ejecutivo ────────────────────────────────────
 def generar_resumen_llm(anomalias, tendencias, correlaciones, oportunidades):
-    """
-    Envía un resumen de los insights al LLM y pide un texto ejecutivo
-    en lenguaje de negocio para incluir en el reporte.
-    """
     cliente = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
     top_deterioros = anomalias[anomalias["categoria"] == "Deterioro"].nsmallest(5, "cambio")
     top_tendencias = tendencias.nsmallest(5, "cambio_total") if not tendencias.empty else pd.DataFrame()
     top_corr       = correlaciones.head(5) if not correlaciones.empty else pd.DataFrame()
@@ -406,7 +476,7 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
     # ── Resumen del LLM ──
     historia.append(Paragraph("Resumen Ejecutivo", estilo_subtitulo))
 
-    for linea in _limpiar_markdown_basico(texto_llm):
+    for linea in limpiar_markdown_basico(texto_llm):
         historia.append(Paragraph(linea, estilo_cuerpo))
     historia.append(Spacer(1, 0.4*cm))
 
@@ -422,8 +492,13 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
         ["Correlaciones relevantes", str(len(correlaciones))],
         ["Oportunidades identificadas", str(len(oportunidades))],
     ]
-    tabla_resumen = _formatear_tabla(datos_tabla, [10*cm, 4*cm])
-    tabla_resumen.setStyle(TableStyle([("ALIGN", (1, 0), (1, -1), "CENTER"), ("FONTSIZE", (0, 0), (-1, -1), 9)]))
+    tabla_resumen = crear_tabla(
+        datos_tabla,
+        [10*cm, 4*cm],
+        font_size=9,
+        align=[("ALIGN", (1, 0), (1, -1), "CENTER")],
+        padding=5,
+    )
     historia.append(tabla_resumen)
     historia.append(Spacer(1, 0.5*cm))
 
@@ -449,8 +524,11 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
              str(r["valor_anterior"]), str(r["valor_actual"]), f"{r['cambio']}%"]
             for _, r in top_det.iterrows()
         ]
-        tabla_det = _formatear_tabla(encabezado + filas, [1.5*cm, 4.5*cm, 4.5*cm, 2*cm, 2*cm, 2*cm])
-        tabla_det.setStyle(TableStyle([("ALIGN", (3, 0), (-1, -1), "CENTER")]))
+        tabla_det = crear_tabla(
+            encabezado + filas,
+            [1.5*cm, 4.5*cm, 4.5*cm, 2*cm, 2*cm, 2*cm],
+            align=[("ALIGN", (3, 0), (-1, -1), "CENTER")],
+        )
         historia.append(tabla_det)
 
     # ── Sección Tendencias ──
@@ -474,8 +552,11 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
              str(r["valor_inicio"]), str(r["valor_actual"]), f"{r['cambio_total']}%"]
             for _, r in top_tend.iterrows()
         ]
-        tabla_tend = _formatear_tabla(encabezado + filas, [1.5*cm, 4.5*cm, 4.5*cm, 2*cm, 2*cm, 2*cm])
-        tabla_tend.setStyle(TableStyle([("ALIGN", (3, 0), (-1, -1), "CENTER")]))
+        tabla_tend = crear_tabla(
+            encabezado + filas,
+            [1.5*cm, 4.5*cm, 4.5*cm, 2*cm, 2*cm, 2*cm],
+            align=[("ALIGN", (3, 0), (-1, -1), "CENTER")],
+        )
         historia.append(tabla_tend)
 
     # ── Sección Correlaciones ──
@@ -498,8 +579,11 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
              str(r["correlacion"]), r["tipo"], str(r["cantidad_zonas"])]
             for _, r in correlaciones.head(8).iterrows()
         ]
-        tabla_corr = _formatear_tabla(encabezado + filas, [5*cm, 5*cm, 2.5*cm, 2.5*cm, 2*cm])
-        tabla_corr.setStyle(TableStyle([("ALIGN", (2, 0), (-1, -1), "CENTER")]))
+        tabla_corr = crear_tabla(
+            encabezado + filas,
+            [5*cm, 5*cm, 2.5*cm, 2.5*cm, 2*cm],
+            align=[("ALIGN", (2, 0), (-1, -1), "CENTER")],
+        )
         historia.append(tabla_corr)
 
     # ── Sección Oportunidades ──
@@ -516,11 +600,12 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
             [r["pais"], r["ciudad"][:15], r["zona"][:20], r["tipo"], r["descripcion"][:50]]
             for _, r in oportunidades.iterrows()
         ]
-        tabla_opps = _formatear_tabla(encabezado + filas, [1.5*cm, 3*cm, 3.5*cm, 3*cm, 6*cm])
-        tabla_opps.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ]))
+        tabla_opps = crear_tabla(
+            encabezado + filas,
+            [1.5*cm, 3*cm, 3.5*cm, 3*cm, 6*cm],
+            font_size=7,
+            valign="TOP",
+        )
         historia.append(tabla_opps)
 
     doc.build(historia)
@@ -529,7 +614,7 @@ def construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunida
 
 # ── Main ───────────────────────────────────────────────────────
 def main():
-    print("Analizando datos...")
+    print("carga de datos...")
     datos         = cargar_datos()
     anomalias     = detectar_anomalias(datos)
     tendencias    = detectar_tendencias(datos)
@@ -537,10 +622,10 @@ def main():
     correlaciones = detectar_correlaciones(datos)
     oportunidades = detectar_oportunidades(datos)
 
-    print("Generando resumen con IA...")
+    print("Generando resumen")
     texto_llm = generar_resumen_llm(anomalias, tendencias, correlaciones, oportunidades)
 
-    print("Construyendo PDF...")
+    print("PDF...")
     construir_pdf(anomalias, tendencias, benchmarking, correlaciones, oportunidades, texto_llm)
 
 
