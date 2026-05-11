@@ -2,6 +2,8 @@ import duckdb
 from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
+import subprocess
 
 app = FastAPI()
 
@@ -186,3 +188,11 @@ def compare_zones(
         result = con.execute(query, [METRICS_PATH, metric]).fetchdf()
 
     return JSONResponse(result.to_dict(orient="records"))
+
+
+@app.get("/insights/report")
+def generar_reporte():
+    subprocess.run(["python3", "insight_automatico.py"])
+    return FileResponse("reporte_rappi.pdf", media_type="application/pdf")
+
+
