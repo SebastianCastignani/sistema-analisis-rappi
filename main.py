@@ -107,7 +107,7 @@ def cross_metrics(
 def zone_trend(
     metric: str = Query(default="Gross Profit UE"),
     zone: str = Query(default="Chapinero"),
-    weeks: int = Query(default=8)
+    weeks: int = Query(default=9)
 ):
     # construimos las columnas según las semanas pedidas
     # si piden 4 semanas → L0W_ROLL, L1W_ROLL, L2W_ROLL, L3W_ROLL
